@@ -1,0 +1,96 @@
+{
+  "ver": "2.3.14",
+  "importer": "fbx",
+  "imported": true,
+  "uuid": "c1a73cb0-e097-4dc8-be93-3c67b810498f",
+  "files": [],
+  "subMetas": {
+    "c6160": {
+      "importer": "gltf-mesh",
+      "uuid": "c1a73cb0-e097-4dc8-be93-3c67b810498f@c6160",
+      "displayName": "",
+      "id": "c6160",
+      "name": "Cylinder001.mesh",
+      "userData": {
+        "gltfIndex": 0,
+        "triangleCount": 1908
+      },
+      "ver": "1.1.1",
+      "imported": true,
+      "files": [
+        ".bin",
+        ".json"
+      ],
+      "subMetas": {}
+    },
+    "4e9cc": {
+      "importer": "gltf-material",
+      "uuid": "c1a73cb0-e097-4dc8-be93-3c67b810498f@4e9cc",
+      "displayName": "",
+      "id": "4e9cc",
+      "name": "wire_202221104.material",
+      "userData": {
+        "gltfIndex": 0
+      },
+      "ver": "1.0.14",
+      "imported": true,
+      "files": [
+        ".json"
+      ],
+      "subMetas": {}
+    },
+    "86f25": {
+      "importer": "gltf-scene",
+      "uuid": "c1a73cb0-e097-4dc8-be93-3c67b810498f@86f25",
+      "displayName": "",
+      "id": "86f25",
+      "name": "cz.prefab",
+      "userData": {
+        "gltfIndex": 0
+      },
+      "ver": "1.0.14",
+      "imported": true,
+      "files": [
+        ".json"
+      ],
+      "subMetas": {}
+    }
+  },
+  "userData": {
+    "imageMetas": [],
+    "fbx": {
+      "smartMaterialEnabled": true
+    },
+    "lods": {
+      "enable": false,
+      "hasBuiltinLOD": false,
+      "options": [
+        {
+          "screenRatio": 0.25,
+          "faceCount": 1
+        },
+        {
+          "screenRatio": 0.125,
+          "faceCount": 0.25
+        },
+        {
+          "screenRatio": 0.01,
+          "faceCount": 0.1
+        }
+      ]
+    },
+    "assetFinder": {
+      "meshes": [
+        "c1a73cb0-e097-4dc8-be93-3c67b810498f@c6160"
+      ],
+      "skeletons": [],
+      "textures": [],
+      "materials": [
+        "c1a73cb0-e097-4dc8-be93-3c67b810498f@4e9cc"
+      ],
+      "scenes": [
+        "c1a73cb0-e097-4dc8-be93-3c67b810498f@86f25"
+      ]
+    }
+  }
+}

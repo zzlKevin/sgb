@@ -1,42 +1,42 @@
-package com.tiga.sgb;
+package com.cocos.game;
 
-import android.os.Build;
-import android.os.Bundle;
 import android.Manifest;
 import android.content.pm.PackageManager;
+import android.os.Build;
+import android.os.Bundle;
+import android.util.Log;
 
-import com.cocos.game.GameActivity;
-import com.tiga.sgb.voice.VoiceRecognitionHelper;
+import com.cocos.lib.GameActivity;
+import com.cocos.game.voice.VoiceRecognitionHelper;
 
 /**
- * MainActivity
- * 神光棒 TV6 - 主 Activity
+ * AppActivity
+ * 神光棒 TV6 - 主 Activity（替换 Cocos 默认生成的 AppActivity）
  *
- * 功能：
- *   1. 申请录音权限
- *   2. 初始化语音识别
- *   3. 在销毁时释放资源
+ * 适配 Cocos Creator 3.8.x：继承 com.cocos.lib.GameActivity
  *
- * 放置位置：build-templates/MainActivity.java（覆盖 Cocos 默认）
+ * 放置位置：build/android/proj/src/com/cocos/game/AppActivity.java
+ * （覆盖 Cocos 构建时生成的同名文件；如果原文件里有你自己加的逻辑，把本文件的
+ *   初始化/权限/销毁 三段代码合并进原文件即可）
  */
-public class MainActivity extends GameActivity {
+public class AppActivity extends GameActivity {
 
+    private static final String TAG = "AppActivity";
     private static final int REQUEST_RECORD_AUDIO = 1001;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // 申请录音权限
+        // ── 申请录音权限 + 初始化语音识别 ──
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_RECORD_AUDIO);
             } else {
-                // 已有权限，初始化语音识别
                 VoiceRecognitionHelper.init(this);
             }
         } else {
-            // Android 6.0 以下不需要动态权限
+            // Android 6.0 以下无需动态权限
             VoiceRecognitionHelper.init(this);
         }
     }
@@ -47,11 +47,10 @@ public class MainActivity extends GameActivity {
 
         if (requestCode == REQUEST_RECORD_AUDIO) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                // 权限已授予，初始化语音识别
+                Log.d(TAG, "录音权限已授予，初始化语音识别");
                 VoiceRecognitionHelper.init(this);
             } else {
-                // 权限被拒绝
-                android.util.Log.w("MainActivity", "录音权限被拒绝，语音识别功能不可用");
+                Log.w(TAG, "录音权限被拒绝，语音识别功能不可用");
             }
         }
     }

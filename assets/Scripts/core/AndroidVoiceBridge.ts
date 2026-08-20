@@ -107,28 +107,28 @@ export class AndroidVoiceBridge extends Component {
     private initBridge(): void {
         // 检查是否在安卓环境
         if (!this.isAndroid()) {
-            console.log('[VoiceBridge] 非安卓环境，启用调试模式');
+            console.log('[VoiceBridge] 非安卓环境，语音识别不可用（可勾选 debugMode 模拟测试）');
             this._initialized = false;
             return;
         }
 
         try {
-            // 使用 Cocos 3.x 的 nativeBridge
-            // 注册回调
-            nativeBridge.eventListener.on(this.BRIDGE_EVENT_RECEIVE, (arg: string) => {
+            // Cocos 3.8 正确 API：nativeBridge.addEventListener
+            // Java 端 JsbBridgeWrapper.emitEventToScript('onVoiceResult', json) → 这里收到
+            nativeBridge.addEventListener(this.BRIDGE_EVENT_RECEIVE, (arg: string) => {
                 this.handleResult(arg);
             });
 
-            nativeBridge.eventListener.on(this.BRIDGE_EVENT_ERROR, (arg: string) => {
+            nativeBridge.addEventListener(this.BRIDGE_EVENT_ERROR, (arg: string) => {
                 this.handleError(arg);
             });
 
-            nativeBridge.eventListener.on(this.BRIDGE_EVENT_READY, () => {
+            nativeBridge.addEventListener(this.BRIDGE_EVENT_READY, () => {
                 console.log('[VoiceBridge] 安卓语音识别已就绪');
                 this._initialized = true;
             });
 
-            // 调用 Java 初始化
+            // 调用 Java 初始化（Java 端 addScriptEventListener('initVoiceRecognition') 收到）
             this.sendToNative('initVoiceRecognition', '');
 
             console.log('[VoiceBridge] JSB Bridge 初始化完成');

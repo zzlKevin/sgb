@@ -43,6 +43,14 @@ export class LEDController extends Component {
     @property
     public defaultIntensity: number = 2.0;
 
+    /**
+     * 发光倍率（emissiveScale 的基础值）
+     * 越大越有过曝的"灯泡感"。配合场景 Bloom 后处理会产生光晕。
+     * 纯色（如红255,0,0）× 高倍率 → 亮红光而非白光，颜色不会丢失。
+     */
+    @property({ tooltip: '发光倍率，越大越亮，配合Bloom有光晕。默认20' })
+    public emissiveBoost: number = 20.0;
+
     // ═════════════════════════════════════════
     // 内部状态
     // ═════════════════════════════════════════
@@ -288,8 +296,9 @@ export class LEDController extends Component {
         const g = Math.min(c.g * 255, 255);
         const b = Math.min(c.b * 255, 255);
 
-        // 亮度倍率：适中即可（过大会被 clamp 成纯白，丢失色彩）
-        const scale = Math.min(intensity, 3.0);
+        // 发光倍率：emissiveBoost × intensity 联动
+        // 高倍率 HDR 过曝产生"灯泡感"，纯色 × 高倍率依然是纯色调（红×50=亮红）
+        const scale = this.emissiveBoost * intensity;
 
         console.log(`[LEDController] setColor → ${LED_COLOR_NAMES[color]} (r=${r.toFixed(0)},g=${g.toFixed(0)},b=${b.toFixed(0)},scale=${scale})`);
 

@@ -45,11 +45,10 @@ export class LEDController extends Component {
 
     /**
      * 发光倍率（emissiveScale 的基础值）
-     * 越大越有过曝的"灯泡感"。配合场景 Bloom 后处理会产生光晕。
-     * 纯色（如红255,0,0）× 高倍率 → 亮红光而非白光，颜色不会丢失。
+     * 默认 5：兼顾亮度与色彩（过大会过曝成白色）。想要更强光晕请在场景加 Bloom 后处理。
      */
-    @property({ tooltip: '发光倍率，越大越亮，配合Bloom有光晕。默认20' })
-    public emissiveBoost: number = 20.0;
+    @property({ tooltip: '发光倍率，默认5。过大过曝变白，过小没灯泡感' })
+    public emissiveBoost: number = 5.0;
 
     // ═════════════════════════════════════════
     // 内部状态
@@ -59,9 +58,6 @@ export class LEDController extends Component {
     private _currentIntensity: number = 2.0;
     private _flashTween: any = null;
     private _breatheTween: any = null;
-
-    /** 已修复过 USE_EMISSIVE_MAP 问题的材质集合（避免重复 recompile） */
-    private _fixedMaterials: Set<any> = new Set();
 
     // ═════════════════════════════════════════
     // 生命周期
@@ -272,12 +268,11 @@ export class LEDController extends Component {
     /**
      * 将颜色应用到灯珠材质
      *
-     * CrystalMat 的问题：材质开启了 USE_EMISSIVE_MAP 宏但没绑定贴图，
-     * 未绑定的贴图采样结果为黑色 → emissive × 黑色 = 0，自发光永远不显示，
-     * 灯珠呈现的白色其实是 mainColor（漫反射）+ 高光。
+     * ⚠️ 重要前置操作（一次性，在编辑器里做）：
+     * 选中 assets/Material/CrystalMat → 属性检查器 → 找到 USE_EMISSIVE_MAP 勾选框 → 取消勾选 → 保存。
+     * 这个宏开着但没绑贴图，emissive 乘黑贴图永远为 0，灯珠只能靠 mainColor 呈白色。
      *
-     * 修复：运行时关闭 USE_EMISSIVE_MAP 宏（emissive 颜色直接生效），
-     * 同时设置 mainColor 让漫反射部分也染色，双保险。
+     * 关掉宏后本方法直接设置 emissive 颜色 + emissiveScale 亮度 + mainColor 染色。
      */
     private _applyColor(color: LEDColor, intensity: number): void {
         const c = LED_COLOR_VALUES[color];
@@ -296,11 +291,8 @@ export class LEDController extends Component {
         const g = Math.min(c.g * 255, 255);
         const b = Math.min(c.b * 255, 255);
 
-        // 发光倍率：emissiveBoost × intensity 联动
-        // 高倍率 HDR 过曝产生"灯泡感"，纯色 × 高倍率依然是纯色调（红×50=亮红）
+        // 发光倍率（温和值：过大会过曝成白色，丢失色彩）
         const scale = this.emissiveBoost * intensity;
-
-        console.log(`[LEDController] setColor → ${LED_COLOR_NAMES[color]} (r=${r.toFixed(0)},g=${g.toFixed(0)},b=${b.toFixed(0)},scale=${scale})`);
 
         for (let i = 0; i < renderers.length; i++) {
             const renderer = renderers[i];
@@ -308,17 +300,6 @@ export class LEDController extends Component {
             if (!mat) {
                 console.warn(`[LEDController] renderer[${i}] "${renderer.node.name}" 没有材质`);
                 continue;
-            }
-
-            // ── 关键修复：关闭未绑定贴图的 USE_EMISSIVE_MAP 宏 ──
-            if (!this._fixedMaterials.has(mat)) {
-                try {
-                    mat.recompileShaders({ USE_EMISSIVE_MAP: false });
-                    console.log(`[LEDController] 已关闭 "${renderer.node.name}" 材质的 USE_EMISSIVE_MAP 宏`);
-                } catch (e) {
-                    console.warn(`[LEDController] recompileShaders 失败（可能宏不存在，忽略）`, e);
-                }
-                this._fixedMaterials.add(mat);
             }
 
             // 设置 emissive 自发光颜色

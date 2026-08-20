@@ -65,36 +65,39 @@ public class VoiceRecognitionHelper {
             sInitialized = true;
 
             // ── 注册 TS → Java 事件 ──
+            // 注意：Cocos 3.8.x JsbBridgeWrapper 的接口是 OnScriptEventListener，
+            //       回调方法签名是 onScriptEvent(String arg) 单参数！
             JsbBridgeWrapper.getInstance().addScriptEventListener("initVoiceRecognition",
-                new JsbBridgeWrapper.ScriptEventListener() {
+                new JsbBridgeWrapper.OnScriptEventListener() {
                     @Override
-                    public void onScriptEvent(String eventName, String data) {
+                    public void onScriptEvent(String arg) {
                         Log.d(TAG, "收到 TS 初始化确认");
                         emitToScript("onVoiceReady", "1");
                     }
                 });
 
             JsbBridgeWrapper.getInstance().addScriptEventListener("startVoiceRecognition",
-                new JsbBridgeWrapper.ScriptEventListener() {
+                new JsbBridgeWrapper.OnScriptEventListener() {
                     @Override
-                    public void onScriptEvent(String eventName, String data) {
+                    public void onScriptEvent(String arg) {
                         startListening();
                     }
                 });
 
             JsbBridgeWrapper.getInstance().addScriptEventListener("stopVoiceRecognition",
-                new JsbBridgeWrapper.ScriptEventListener() {
+                new JsbBridgeWrapper.OnScriptEventListener() {
                     @Override
-                    public void onScriptEvent(String eventName, String data) {
+                    public void onScriptEvent(String arg) {
                         stopListening();
                     }
                 });
 
             Log.d(TAG, "语音识别初始化完成");
             emitToScript("onVoiceReady", "1");
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            // 捕获所有异常（含 NoClassDefFoundError 等），绝不让语音模块搞崩 APP
             Log.e(TAG, "初始化失败", e);
-            emitToScript("onVoiceError", "5"); // CLIENT_ERROR
+            sInitialized = false;
         }
     }
 
@@ -225,8 +228,8 @@ public class VoiceRecognitionHelper {
     private static void emitToScript(String event, String data) {
         try {
             JsbBridgeWrapper.getInstance().emitEventToScript(event, data);
-        } catch (Exception e) {
-            Log.e(TAG, "emitEventToScript 失败: " + event, e);
+        } catch (Throwable e) {
+            // 引擎桥未就绪或类缺失，静默失败，绝不崩溃
         }
     }
 }

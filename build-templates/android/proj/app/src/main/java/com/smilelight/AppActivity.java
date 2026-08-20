@@ -15,9 +15,11 @@ import com.cocos.game.voice.VoiceRecognitionHelper;
  *
  * 适配 Cocos Creator 3.8.x：继承 com.cocos.lib.GameActivity
  *
- * 放置位置：build/android/proj/src/com/cocos/game/AppActivity.java
- * （覆盖 Cocos 构建时生成的同名文件；如果原文件里有你自己加的逻辑，把本文件的
- *   初始化/权限/销毁 三段代码合并进原文件即可）
+ * 通过 build-templates 自动生效：
+ *   build-templates/android/proj/app/src/main/java/com/cocos/game/AppActivity.java
+ *   → 构建时自动覆盖 build/android/proj/app/src/main/java/com/cocos/game/AppActivity.java
+ *   （如果原构建文件里有你自己加的逻辑，把本文件的
+ *     初始化/权限/销毁 三段代码合并进原文件即可）
  */
 public class AppActivity extends GameActivity {
 

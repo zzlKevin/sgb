@@ -10,9 +10,7 @@
   },
   "_techIdx": 0,
   "_defines": [
-    {
-      "USE_EMISSIVE_MAP": true
-    },
+    {},
     {},
     {},
     {},

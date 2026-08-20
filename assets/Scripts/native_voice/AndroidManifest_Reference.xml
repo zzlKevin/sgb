@@ -1,0 +1,81 @@
+<!--
+  神光棒 TV6 - AndroidManifest 权限配置参考
+  将以下权限和配置添加到你的 AndroidManifest.xml 中
+-->
+
+<!-- ═════════════════════════════════════════ -->
+<!-- 权限声明（放在 <manifest> 标签内，<application> 之前） -->
+<!-- ═════════════════════════════════════════ -->
+
+<!-- 录音权限（语音识别必需） -->
+<uses-permission android:name="android.permission.RECORD_AUDIO"/>
+
+<!-- 网络权限（在线语音识别需要） -->
+<uses-permission android:name="android.permission.INTERNET"/>
+
+<!-- 网络状态权限 -->
+<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
+<!-- ═════════════════════════════════════════ -->
+<!-- Application 内的配置 -->
+<!-- ═════════════════════════════════════════ -->
+
+<!--
+  在 <application> 标签中添加以下属性：
+  android:theme="@style/AppTheme"
+-->
+
+<!-- ═════════════════════════════════════════ -->
+<!-- 运行时权限申请 -->
+<!-- ═════════════════════════════════════════ -->
+
+<!--
+  Android 6.0+ 需要动态申请录音权限。
+  在 MainActivity.onCreate 中添加以下代码：
+
+  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+          requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 1001);
+      }
+  }
+-->
+
+
+<!-- ═════════════════════════════════════════ -->
+<!-- 完整示例 AndroidManifest.xml -->
+<!-- ═════════════════════════════════════════ -->
+
+<!--
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.tiga.sgb">
+
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme"
+        android:usesCleartextTraffic="true">
+
+        <activity
+            android:name="com.cocos.game.GameActivity"
+            android:configChanges="orientation|keyboardHidden|screenSize|screenLayout"
+            android:label="@string/app_name"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:theme="@style/GameActivityTheme"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+-->

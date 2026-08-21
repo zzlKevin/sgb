@@ -116,10 +116,10 @@ public class VoiceRecognitionHelper {
         }
 
         try {
-            // 1. 讯飞引擎基础初始化（appid 必须与包名匹配）
+            // 1. 讯飞引擎基础初始化（appid 必须与包名匹配；官方写法用 SpeechConstant.APPID）
             SpeechUtility utility = SpeechUtility.createUtility(
                     context.getApplicationContext(),
-                    "appid=" + IFLYTEK_APPID + ",fpu=false");
+                    SpeechConstant.APPID + "=" + IFLYTEK_APPID);
             if (utility == null) {
                 Log.e(TAG, "讯飞 SpeechUtility 创建失败（检查 appid 是否已替换 / Msc.jar 是否已放入 libs）");
                 sUnavailable = true;
@@ -371,8 +371,8 @@ public class VoiceRecognitionHelper {
             sRecognizer.setParameter(SpeechConstant.ENGINE_TYPE, SpeechConstant.TYPE_LOCAL);
             sRecognizer.setParameter(SpeechConstant.LANGUAGE, "zh_cn");
             sRecognizer.setParameter(SpeechConstant.ACCENT, "mandarin");
-            // 音频来源：麦克风（"2" 是写音频流）
-            sRecognizer.setParameter(SpeechConstant.ASR_AUDIO_SOURCE, "1");
+            // 注：音频来源不设置，SDK 默认就是麦克风（"-1" 才是写音频流）。
+            //     不用 ASR_AUDIO_SOURCE 常量——部分 SDK 版本里不存在该符号，编译不过。
             // VAD 静音超时（毫秒）：前端 4s（多久没开始说话算超时）/ 后端 2s（说完多久收尾）
             sRecognizer.setParameter(SpeechConstant.VAD_BOS, "4000");
             sRecognizer.setParameter(SpeechConstant.VAD_EOS, "2000");

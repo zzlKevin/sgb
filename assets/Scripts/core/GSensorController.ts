@@ -140,6 +140,21 @@ export class GSensorController extends Component {
         return this._enabled_sensor;
     }
 
+    /** 最近一次加速度读数（调试面板/外部监测用） */
+    public get lastAccel(): Readonly<Vec3> {
+        return this._lastAccel;
+    }
+
+    /** 基准加速度（校准后的水平姿态读数，调试面板用） */
+    public get baseline(): Readonly<Vec3> {
+        return this._baseline;
+    }
+
+    /** 是否正在校准基准姿态（调试面板用） */
+    public get isCalibrating(): boolean {
+        return this._calibrating;
+    }
+
     /** 重新校准基准（用户重新摆正姿态时调用） */
     public startCalibration(): void {
         this._calibrating = true;

@@ -1,20 +1,30 @@
 /**
  * AndroidVoiceBridge.ts
- * 神光棒 TV6 - 安卓语音识别桥接
+ * 神光棒 TV6 - 安卓语音识别桥接（v5 重写版）
  *
- * 通过 Cocos Creator 的 JSB（JavaScript Binding）调用 Android 原生 SpeechRecognizer
+ * 使用 Cocos Creator 3.8 官方 JsbBridgeWrapper 事件桥（引擎源码核实）：
+ *   TS  → Java : native.jsbBridgeWrapper.dispatchEventToNative(event, arg)
+ *                → Java 端 JsbBridgeWrapper.addScriptEventListener(event, listener) 收到
+ *   Java → TS  : JsbBridgeWrapper.getInstance().dispatchEventToScript(event, arg)
+ *                → TS 端 native.jsbBridgeWrapper.addNativeEventListener(event, cb) 收到
  *
- * 工作原理：
- *   1. TS 层调用 startListening() → 通过 jsb.bridge 调用 Java 方法
- *   2. Java 层启动 SpeechRecognizer，识别结果通过 jsb.bridge 回调到 TS
- *   3. VoiceCommandManager 解析文本并分发指令
+ * 事件协议：
+ *   initVoiceRecognition  (TS→Java)  TS 就绪握手，Java 收到后回发 onVoiceReady
+ *   startVoiceRecognition (TS→Java)  开始监听
+ *   stopVoiceRecognition  (TS→Java)  停止监听
+ *   onVoiceReady          (Java→TS)  初始化完成（TS 收到后按需自动开始监听）
+ *   onVoiceResult         (Java→TS)  识别结果 JSON: {text, confidence, isFinal}
+ *   onVoiceError          (Java→TS)  安卓标准错误码 1~9
  *
- * 安卓端需要：
- *   - AndroidManifest.xml 添加 <uses-permission android:name="android.permission.RECORD_AUDIO"/>
- *   - 实现 VoiceRecognitionHelper.java（见项目 docs/AndroidVoiceBridge.java 参考）
+ * 安卓端 Java 文件（放在项目 native/engine/android/ 下，构建自动打包）：
+ *   native/engine/android/app/src/main/java/com/smilelight/AppActivity.java
+ *   native/engine/android/app/src/main/java/com/smilelight/voice/VoiceRecognitionHelper.java
+ *
+ * ⚠️ 不要用 build-templates 放 Java 文件——官方文档确认原生平台模板目录名是
+ *    native 而非 android，放 android 子目录不会被拷贝。
  */
 
-import { _decorator, Component, sys, nativeBridge, EventTouch, input, Input } from 'cc';
+import { _decorator, Component, sys, native, EventTouch, input, Input } from 'cc';
 
 const { ccclass, property } = _decorator;
 
@@ -28,16 +38,27 @@ export interface VoiceRecognitionResult {
     isFinal: boolean;
 }
 
-/** 语音识别错误码 */
+/** 语音识别错误码（与安卓 SpeechRecognizer 标准错误码对齐） */
 export enum VoiceError {
     NONE = 0,
-    NO_SPEECH = 1,
-    AUDIO_ERROR = 2,
-    NETWORK_ERROR = 3,
-    PERMISSION_DENIED = 4,
+    /** 网络超时 */
+    NETWORK_TIMEOUT = 1,
+    /** 网络错误 */
+    NETWORK = 2,
+    /** 音频错误 */
+    AUDIO_ERROR = 3,
+    /** 服务端错误 */
+    SERVER_ERROR = 4,
+    /** 客户端错误 */
     CLIENT_ERROR = 5,
-    SERVER_ERROR = 6,
-    NOT_AVAILABLE = 7,
+    /** 无语音输入超时 */
+    SPEECH_TIMEOUT = 6,
+    /** 无匹配结果 */
+    NO_MATCH = 7,
+    /** 识别器忙 */
+    RECOGNIZER_BUSY = 8,
+    /** 权限不足 */
+    PERMISSION_DENIED = 9,
 }
 
 @ccclass('AndroidVoiceBridge')
@@ -47,17 +68,25 @@ export class AndroidVoiceBridge extends Component {
     // 编辑器属性
     // ═════════════════════════════════════════
 
-    /** 是否启用触摸触发语音识别（仅安卓真机有效。编辑器/浏览器中点击不会模拟） */
-    @property
+    /** Java 桥就绪后自动开始监听（通知栏会出现麦克风标识） */
+    @property({ tooltip: 'Java桥就绪后自动开始监听，通知栏会出现麦克风标识' })
+    public autoStart: boolean = true;
+
+    /** 持续聆听：一次识别结束后自动重新开始（延时见 autoRestartDelay） */
+    @property({ tooltip: '持续聆听：一次识别结束后自动重新开始' })
+    public continuousListening: boolean = true;
+
+    /** 自动重启延时（秒）。continuousListening 开启时默认 1 秒 */
+    @property({ tooltip: '识别结束/出错后多久自动重启监听（秒）' })
+    public autoRestartDelay: number = 1.0;
+
+    /** 是否启用触摸触发语音识别（备用：自动启动失效时点屏幕启动） */
+    @property({ tooltip: '触摸屏幕也可启动监听（备用手段）' })
     public touchToStart: boolean = false;
 
     /** 调试模式：非安卓环境下自动模拟语音指令（仅用于开发测试，默认关闭） */
     @property
     public debugMode: boolean = false;
-
-    /** 自动重连间隔（秒），识别结束后自动重新启动 */
-    @property
-    public autoRestartDelay: number = 0;
 
     // ═════════════════════════════════════════
     // 内部状态
@@ -66,7 +95,7 @@ export class AndroidVoiceBridge extends Component {
     /** 是否正在监听 */
     private _isListening: boolean = false;
 
-    /** 是否已初始化 */
+    /** Java 桥是否就绪（false = 原生代码没打进 APK） */
     private _initialized: boolean = false;
 
     /** 安卓 JSB Bridge 的事件名 */
@@ -108,32 +137,60 @@ export class AndroidVoiceBridge extends Component {
         // 检查是否在安卓环境
         if (!this.isAndroid()) {
             console.log('[VoiceBridge] 非安卓环境，语音识别不可用（可勾选 debugMode 模拟测试）');
-            this._initialized = false;
+            return;
+        }
+
+        const wrapper = this.getWrapper();
+        if (!wrapper || typeof wrapper.addNativeEventListener !== 'function') {
+            console.error('[VoiceBridge] jsbBridgeWrapper 不可用（引擎异常？）');
             return;
         }
 
         try {
-            // Cocos 3.8 正确 API：nativeBridge.addEventListener
-            // Java 端 JsbBridgeWrapper.emitEventToScript('onVoiceResult', json) → 这里收到
-            nativeBridge.addEventListener(this.BRIDGE_EVENT_RECEIVE, (arg: string) => {
+            // Java → TS 事件（Cocos 3.8 官方 API：native.jsbBridgeWrapper）
+            wrapper.addNativeEventListener(this.BRIDGE_EVENT_RECEIVE, (arg: string) => {
                 this.handleResult(arg);
             });
 
-            nativeBridge.addEventListener(this.BRIDGE_EVENT_ERROR, (arg: string) => {
+            wrapper.addNativeEventListener(this.BRIDGE_EVENT_ERROR, (arg: string) => {
                 this.handleError(arg);
             });
 
-            nativeBridge.addEventListener(this.BRIDGE_EVENT_READY, () => {
-                console.log('[VoiceBridge] 安卓语音识别已就绪');
-                this._initialized = true;
+            wrapper.addNativeEventListener(this.BRIDGE_EVENT_READY, () => {
+                this.onBridgeReady();
             });
 
-            // 调用 Java 初始化（Java 端 addScriptEventListener('initVoiceRecognition') 收到）
+            // TS → Java 握手：Java 收到后回发 onVoiceReady
             this.sendToNative('initVoiceRecognition', '');
 
-            console.log('[VoiceBridge] JSB Bridge 初始化完成');
+            console.log('[VoiceBridge] 事件监听注册完成，等待 Java 就绪回执...');
         } catch (e) {
             console.error('[VoiceBridge] 初始化失败', e);
+        }
+    }
+
+    /** Java 桥就绪回调 */
+    private onBridgeReady(): void {
+        if (this._initialized) return;
+        this._initialized = true;
+        console.log('[VoiceBridge] 安卓语音识别已就绪');
+        this.node.emit('onVoiceReady');
+
+        if (this.autoStart) {
+            this.scheduleOnce(() => {
+                this.startListening();
+            }, 0.3);
+        }
+    }
+
+    /** 获取 JsbBridgeWrapper（Cocos 3.8 官方事件桥） */
+    private getWrapper(): any {
+        try {
+            const n: any = (typeof native !== 'undefined' && native) ? native
+                : (globalThis as any).native;
+            return n ? n.jsbBridgeWrapper : null;
+        } catch (e) {
+            return null;
         }
     }
 
@@ -142,12 +199,21 @@ export class AndroidVoiceBridge extends Component {
         return sys.platform === sys.Platform.ANDROID;
     }
 
+    /** Java 桥是否已就绪（false = 原生 Java 代码没打进 APK） */
+    public isInitialized(): boolean {
+        return this._initialized;
+    }
+
     /** 发送指令到原生层 */
     private sendToNative(method: string, arg: string): void {
         if (!this.isAndroid()) return;
         try {
-            // Cocos 3.x: 通过 nativeBridge.sendToNative 调用
-            nativeBridge.sendToNative(method, arg);
+            const wrapper = this.getWrapper();
+            if (wrapper && typeof wrapper.dispatchEventToNative === 'function') {
+                wrapper.dispatchEventToNative(method, arg);
+            } else {
+                console.warn(`[VoiceBridge] dispatchEventToNative 不可用: ${method}`);
+            }
         } catch (e) {
             console.error(`[VoiceBridge] sendToNative(${method}) 失败`, e);
         }
@@ -171,7 +237,7 @@ export class AndroidVoiceBridge extends Component {
 
         this.sendToNative('startVoiceRecognition', '');
         this._isListening = true;
-        console.log('[VoiceBridge] 开始语音识别');
+        console.log('[VoiceBridge] 开始语音识别（通知栏应出现麦克风标识）');
         return true;
     }
 
@@ -215,12 +281,7 @@ export class AndroidVoiceBridge extends Component {
             } as VoiceRecognitionResult);
         }
 
-        // 自动重启
-        if (this.autoRestartDelay > 0) {
-            this.scheduleOnce(() => {
-                this.startListening();
-            }, this.autoRestartDelay);
-        }
+        this.scheduleRestart();
     }
 
     /** 处理错误 */
@@ -236,12 +297,20 @@ export class AndroidVoiceBridge extends Component {
 
         this.node.emit('onVoiceError', errorCode);
 
-        // 自动重启
-        if (this.autoRestartDelay > 0 && errorCode !== VoiceError.PERMISSION_DENIED) {
-            this.scheduleOnce(() => {
-                this.startListening();
-            }, this.autoRestartDelay);
+        // 权限不足不重启（重启也没用）；识别器忙则多等一会儿
+        if (errorCode !== VoiceError.PERMISSION_DENIED) {
+            this.scheduleRestart(errorCode === VoiceError.RECOGNIZER_BUSY ? 2.0 : 0);
         }
+    }
+
+    /** 自动重启监听 */
+    private scheduleRestart(extraDelay: number = 0): void {
+        if (!this.continuousListening && this.autoRestartDelay <= 0) return;
+
+        const base = this.autoRestartDelay > 0 ? this.autoRestartDelay : 1.0;
+        this.scheduleOnce(() => {
+            this.startListening();
+        }, base + extraDelay);
     }
 
     // ═════════════════════════════════════════

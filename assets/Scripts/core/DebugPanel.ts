@@ -345,7 +345,8 @@ export class DebugPanel extends Component {
         } else if (!this._voiceBridge.isAndroid()) {
             voiceStr = `语音: 非安卓环境（编辑器） 模拟:${this._voiceBridge.debugMode ? '开' : '关'}`;
         } else if (!this._voiceBridge.isInitialized()) {
-            voiceStr = '语音: Java桥未就绪 → 原生代码没进APK!\n检查 native/engine/android/app/src/main/java/';
+            voiceStr = `语音: 握手中 ${this._voiceBridge.getHandshakeCount()}/10` +
+                `（Java桥未就绪可能是原生代码没进APK）\n检查 native/engine/android/app/src/main/java/`;
         } else {
             voiceStr = `语音: ${this._voiceBridge.isListening()
                 ? '监听中(通知栏有麦克风)' : '就绪·未监听'}`;

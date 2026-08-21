@@ -30,19 +30,20 @@ public class AppActivity extends CocosActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         // 标记日志：logcat 过滤 SGBAppActivity，出现这行 = 本文件确实打进了 APK
-        Log.d(TAG, "SGB AppActivity 启动（语音增强版 v5）");
+        Log.d(TAG, "SGB AppActivity 启动（语音增强版 v6）");
 
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
-                        != PackageManager.PERMISSION_GRANTED) {
-                    requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},
-                            REQUEST_RECORD_AUDIO);
-                } else {
-                    VoiceRecognitionHelper.init(this);
-                }
-            } else {
-                VoiceRecognitionHelper.init(this);
+            // v6：无条件先 init（只注册监听+创建识别器，纯 Java 操作，不发事件，安全）
+            // ⚠️ v5 在这里 init 后立即向 TS 发 onVoiceReady，而 JS 引擎还没启动
+            // → native 层 getCurrentAppSafe() 直接 SIGABRT 闪退（真机堆栈实锤）
+            VoiceRecognitionHelper.init(this);
+
+            // 权限检查：没有就弹窗申请（结果在 onRequestPermissionsResult 回调）
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                    && checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                            != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},
+                        REQUEST_RECORD_AUDIO);
             }
         } catch (Throwable t) {
             // 语音模块绝不拖崩主 APP
@@ -58,8 +59,8 @@ public class AppActivity extends CocosActivity {
 
         try {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                Log.d(TAG, "录音权限已授予，初始化语音识别");
-                VoiceRecognitionHelper.init(this);
+                Log.d(TAG, "录音权限已授予（识别器已在 onCreate 创建，直接可用）");
+                // init 已在 onCreate 调过（内部有防重入），无需再调
             } else {
                 Log.w(TAG, "录音权限被拒绝，语音识别不可用");
                 VoiceRecognitionHelper.notifyPermissionDenied();

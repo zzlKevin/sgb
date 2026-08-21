@@ -112,6 +112,11 @@ export class AndroidVoiceBridge extends Component {
 
     private _debugIndex: number = 0;
 
+    /** 握手重试计数（防权限弹窗期间事件丢失的时序竞争） */
+    private _handshakeCount: number = 0;
+    private static readonly HANDSHAKE_MAX_RETRY: number = 10;
+    private static readonly HANDSHAKE_INTERVAL: number = 2.0;
+
     // ═════════════════════════════════════════
     // 生命周期
     // ═════════════════════════════════════════
@@ -160,19 +165,36 @@ export class AndroidVoiceBridge extends Component {
                 this.onBridgeReady();
             });
 
-            // TS → Java 握手：Java 收到后回发 onVoiceReady
-            this.sendToNative('initVoiceRecognition', '');
+            // TS → Java 握手（带重试）：Java 收到后回发 onVoiceReady。
+            // 必须由 TS 主动发起——onCreate 阶段 JS 引擎未启动，Java 主动发事件
+            // 会触发 native 层 SIGABRT 直接闪退（真机堆栈实锤，v5 教训）
+            this.sendHandshake();
 
-            console.log('[VoiceBridge] 事件监听注册完成，等待 Java 就绪回执...');
+            console.log('[VoiceBridge] 事件监听注册完成，开始握手（每2秒重试，最多10次）...');
         } catch (e) {
             console.error('[VoiceBridge] 初始化失败', e);
         }
+    }
+
+    /** 发送握手（带重试）：Java 端就绪前事件可能丢失，靠重试兜底 */
+    private sendHandshake(): void {
+        if (this._initialized) return;
+        if (this._handshakeCount >= AndroidVoiceBridge.HANDSHAKE_MAX_RETRY) {
+            console.warn('[VoiceBridge] 握手10次无响应，放弃（Java 侧未就绪或未打包）');
+            return;
+        }
+        this._handshakeCount++;
+        this.sendToNative('initVoiceRecognition', '');
+        console.log(`[VoiceBridge] 握手 #${this._handshakeCount}/${AndroidVoiceBridge.HANDSHAKE_MAX_RETRY}`);
+        // 2秒后无响应就重试
+        this.scheduleOnce(() => this.sendHandshake(), AndroidVoiceBridge.HANDSHAKE_INTERVAL);
     }
 
     /** Java 桥就绪回调 */
     private onBridgeReady(): void {
         if (this._initialized) return;
         this._initialized = true;
+        this._handshakeCount = AndroidVoiceBridge.HANDSHAKE_MAX_RETRY; // 停止重试
         console.log('[VoiceBridge] 安卓语音识别已就绪');
         this.node.emit('onVoiceReady');
 
@@ -202,6 +224,11 @@ export class AndroidVoiceBridge extends Component {
     /** Java 桥是否已就绪（false = 原生 Java 代码没打进 APK） */
     public isInitialized(): boolean {
         return this._initialized;
+    }
+
+    /** 当前握手进度（0~10）——调试面板用 */
+    public getHandshakeCount(): number {
+        return this._handshakeCount;
     }
 
     /** 发送指令到原生层 */
@@ -296,6 +323,15 @@ export class AndroidVoiceBridge extends Component {
         console.warn(`[VoiceBridge] 语音识别错误: ${errorCode}`);
 
         this.node.emit('onVoiceError', errorCode);
+
+        // 握手期间收到致命错误（权限拒/服务不可用）：停止握手重试
+        if (!this._initialized &&
+            (errorCode === VoiceError.PERMISSION_DENIED || errorCode === VoiceError.CLIENT_ERROR)) {
+            this._handshakeCount = AndroidVoiceBridge.HANDSHAKE_MAX_RETRY;
+            this._lastError = errorCode;
+            console.warn('[VoiceBridge] 握手阶段收到致命错误，停止重试');
+            return;
+        }
 
         // 权限不足不重启（重启也没用）；识别器忙则多等一会儿
         if (errorCode !== VoiceError.PERMISSION_DENIED) {

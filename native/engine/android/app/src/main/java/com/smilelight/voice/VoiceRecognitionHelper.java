@@ -42,8 +42,24 @@ public class VoiceRecognitionHelper {
     private static boolean sInitialized = false;
     private static boolean sListening = false;
 
+    /**
+     * ⚠️ 崩溃教训（SIGABRT 实测）：
+     * onCreate 阶段 Cocos 的 JS 引擎还没启动，此时调 dispatchEventToScript
+     * 会在 native 层 ApplicationManager::getCurrentAppSafe() 直接 abort 杀进程，
+     * Java 的 try-catch 根本拦不住（不是异常，是 native abort）。
+     * 所以：Java 绝不主动发事件，必须等 TS 先发握手（initVoiceRecognition）过来，
+     * 此时引擎必然已就绪，回发才安全。sTsReady 就是这道闸门。
+     */
+    private static volatile boolean sTsReady = false;
+
+    /** 设备不支持语音识别（延迟到握手后上报，不能在 onCreate 期间上报） */
+    private static boolean sUnavailable = false;
+
+    /** 权限被拒（延迟到握手后上报） */
+    private static boolean sPermissionDenied = false;
+
     // ═════════════════════════════════════════
-    // 初始化（AppActivity 权限授予后调用）
+    // 初始化（AppActivity onCreate 调用，此时只做纯 Java 工作，绝不向 TS 发事件）
     // ═════════════════════════════════════════
 
     public static void init(Context context) {
@@ -53,21 +69,25 @@ public class VoiceRecognitionHelper {
             // 设备可用性检查（国产 ROM 缺谷歌服务时常见不可用）
             if (!SpeechRecognizer.isRecognitionAvailable(context)) {
                 Log.w(TAG, "本机没有可用的语音识别服务（缺少谷歌服务/语音引擎）");
-                dispatchToScript("onVoiceError", "5");
-                return;
+                sUnavailable = true;
+                // ⚠️ 不在这里 dispatch！onCreate 阶段发事件 = SIGABRT 闪退
+                // 握手后由 handleTsReady 统一上报
             }
 
-            sRecognizer = SpeechRecognizer.createSpeechRecognizer(context);
-            sRecognizer.setRecognitionListener(sRecognitionListener);
+            if (!sUnavailable) {
+                sRecognizer = SpeechRecognizer.createSpeechRecognizer(context);
+                sRecognizer.setRecognitionListener(sRecognitionListener);
+            }
 
             JsbBridgeWrapper jbw = JsbBridgeWrapper.getInstance();
 
             // TS→Java 事件注册（OnScriptEventListener 单参数，引擎源码核实的接口名）
+            // 注册本身是纯 Java 操作，onCreate 阶段安全
             jbw.addScriptEventListener("initVoiceRecognition", new JsbBridgeWrapper.OnScriptEventListener() {
                 @Override
                 public void onScriptEvent(String arg) {
-                    Log.d(TAG, "收到 TS 就绪握手，回发 onVoiceReady");
-                    dispatchToScript("onVoiceReady", "1");
+                    Log.d(TAG, "收到 TS 就绪握手");
+                    handleTsReady();
                 }
             });
 
@@ -86,8 +106,7 @@ public class VoiceRecognitionHelper {
             });
 
             sInitialized = true;
-            Log.d(TAG, "语音识别初始化完成（等待 TS 握手）");
-            dispatchToScript("onVoiceReady", "1");
+            Log.d(TAG, "语音识别初始化完成（已挂监听，等 TS 握手，不发任何事件）");
 
         } catch (Throwable t) {
             // 捕获一切异常（含 NoClassDefFoundError），语音模块绝不拖崩 APP
@@ -96,9 +115,34 @@ public class VoiceRecognitionHelper {
         }
     }
 
-    /** 权限被拒时上报（错误码 9 = INSUFFICIENT_PERMISSIONS） */
+    /**
+     * TS 握手到达 → 引擎已就绪，现在才允许向 TS 发事件。
+     * 把初始化期间积累的状态一次性上报。
+     */
+    private static void handleTsReady() {
+        sTsReady = true;
+        try {
+            if (sPermissionDenied) {
+                dispatchToScript("onVoiceError", "9");
+                return;
+            }
+            if (sUnavailable) {
+                dispatchToScript("onVoiceError", "5");
+                return;
+            }
+            dispatchToScript("onVoiceReady", "1");
+        } catch (Throwable t) {
+            Log.e(TAG, "handleTsReady 异常", t);
+        }
+    }
+
+    /** 权限被拒时记录，握手后上报（错误码 9 = INSUFFICIENT_PERMISSIONS） */
     public static void notifyPermissionDenied() {
-        dispatchToScript("onVoiceError", "9");
+        sPermissionDenied = true;
+        if (sTsReady) {
+            dispatchToScript("onVoiceError", "9");
+        }
+        // 未握手时不上报，等 handleTsReady 统一处理
     }
 
     // ═════════════════════════════════════════
@@ -237,11 +281,16 @@ public class VoiceRecognitionHelper {
     // ═════════════════════════════════════════
 
     private static void dispatchToScript(String event, String data) {
+        // 闸门：TS 未握手 = JS 引擎未就绪 = 发事件必 SIGABRT 闪退
+        if (!sTsReady) {
+            Log.w(TAG, "跳过向 TS 发送 " + event + "（引擎未就绪，发送会闪退）");
+            return;
+        }
         try {
             // 引擎源码核实的方法名是 dispatchEventToScript（不是 emitEventToScript）
             JsbBridgeWrapper.getInstance().dispatchEventToScript(event, data);
         } catch (Throwable t) {
-            // 引擎桥未就绪（JS 未启动等），静默失败
+            // 引擎桥异常，静默失败，绝不拖崩 APP
         }
     }
 }

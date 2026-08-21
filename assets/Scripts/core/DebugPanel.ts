@@ -23,7 +23,8 @@
  */
 
 import { _decorator, Component, Node, Label, UITransform, Graphics, Color,
-         view, input, Input, EventTouch, find } from 'cc';
+         view, input, Input, EventTouch, find, Layers, Canvas, Camera, ClearFlag,
+         director } from 'cc';
 import { GSensorController } from './GSensorController';
 import { AndroidVoiceBridge } from './AndroidVoiceBridge';
 import { GameManager } from './GameManager';
@@ -118,6 +119,11 @@ export class DebugPanel extends Component {
         this.hookConsole();
         this.bindEvents();
         input.on(Input.EventType.TOUCH_START, this.onTouchStart, this);
+        console.log('[DebugPanel] 初始化完成 layer=UI_2D root=' +
+            (this._root ? this._root.name : '无') +
+            ' GM=' + (this._gameManager ? '√' : '×') +
+            ' GS=' + (this._gSensor ? '√' : '×') +
+            ' VB=' + (this._voiceBridge ? '√' : '×'));
     }
 
     onDestroy() {
@@ -210,6 +216,77 @@ export class DebugPanel extends Component {
     // UI 构建（纯代码，零场景配置）
     // ═════════════════════════════════════════
 
+    /**
+     * 获取或自动创建画布（全自动驾驶）。
+     * 1. 场景已有 Canvas → 复用，并顺手修正其 UI 相机的黑屏隐患
+     * 2. 没有 → 自建 Canvas + 专用 UI 相机（正交/DEPTH_ONLY/只看UI层/后渲染）
+     *    （黑屏教训：手动新建的 Canvas 自带相机默认 SOLID_COLOR 清屏，
+     *     渲染顺序在主 3D 相机之后，会把整个 3D 画面刷成黑色）
+     */
+    private getOrCreateCanvas(): Node {
+        // ① 全场景找 Canvas
+        const existing = find('Canvas');
+        if (existing && existing.getComponent(Canvas)) {
+            this.fixUICameras(existing);
+            return existing;
+        }
+
+        // ② 自建（挂到场景根，不受本组件所在节点变换影响）
+        const scene = director.getScene();
+        if (!scene) {
+            console.warn('[DebugPanel] 场景未就绪，面板挂到本组件节点');
+            return this.node;
+        }
+
+        const canvasNode = new Node('DebugCanvas');
+        canvasNode.layer = Layers.Enum.UI_2D;
+        scene.addChild(canvasNode);
+        canvasNode.addComponent(UITransform);
+        canvasNode.addComponent(Canvas);
+
+        // 专用 UI 相机（引擎注释：DEPTH_ONLY 常用于 UI 相机——不清颜色，叠加渲染）
+        const camNode = new Node('DebugUICamera');
+        camNode.layer = Layers.Enum.UI_2D;
+        canvasNode.addChild(camNode);
+        camNode.setPosition(0, 0, 1000);
+        const cam = camNode.addComponent(Camera);
+        cam.projection = Camera.ProjectionType.ORTHO;
+        cam.orthoHeight = 1000;
+        cam.visibility = Layers.Enum.UI_2D;
+        cam.priority = 1000;           // 大于主 3D 相机（默认0），后渲染叠加
+        cam.clearFlags = ClearFlag.DEPTH_ONLY;  // ★不清颜色，3D 画面得以保留
+        cam.near = 1;
+        cam.far = 2001;
+
+        // Canvas 与 UI 相机关联
+        canvasNode.getComponent(Canvas).cameraComponent = cam;
+
+        console.log('[DebugPanel] 自动创建画布+UI相机完成（DEPTH_ONLY 不黑屏）');
+        return canvasNode;
+    }
+
+    /**
+     * 修正已有 Canvas 下 UI 相机的黑屏隐患：
+     * SOLID_COLOR 清屏相机在 3D 场景里会刷黑画面 → 改为 DEPTH_ONLY。
+     * 同时确保相机只看 UI_2D 层、渲染顺序在主相机之后。
+     */
+    private fixUICameras(canvasNode: Node): void {
+        try {
+            const cams = canvasNode.getComponentsInChildren(Camera);
+            for (const cam of cams) {
+                if (cam.clearFlags === ClearFlag.SOLID_COLOR) {
+                    cam.clearFlags = ClearFlag.DEPTH_ONLY;
+                    console.log(`[DebugPanel] 已修正 UI 相机 ${cam.node.name}: 清屏→只清深度（防黑屏）`);
+                }
+                if (cam.priority < 100) {
+                    cam.priority = 1000;
+                }
+            }
+        } catch (e) {
+            console.warn('[DebugPanel] UI 相机修正失败', e);
+        }
+    }
+
     private buildUI(): void {
         const vs = view.getVisibleSize();
         const margin = 6;
@@ -224,9 +301,12 @@ export class DebugPanel extends Component {
         const logH = this.maxLogLines * logLineH;
         const height = pad * 2 + titleH + 2 + lineH + 2 + lineH + 2 + voiceH + 4 + logH + 4;
 
-        // 根节点（挂到 Canvas 下，保证全屏 UI 层）
-        const canvasNode = (find && find('Canvas')) || this.node.parent || this.node;
+        // 根节点（自动找/建画布，保证全屏 UI 层）
+        const canvasNode = this.getOrCreateCanvas();
         const root = new Node('DebugPanelRoot');
+        // ⚠️ 关键：代码创建的节点默认层是 DEFAULT(3D层)，UI 相机看不到！
+        // 必须显式设为 UI_2D，否则面板整体隐形（v6 黑屏排查时发现的 bug）
+        root.layer = Layers.Enum.UI_2D;
         canvasNode.addChild(root);
         this._root = root;
 
@@ -242,6 +322,7 @@ export class DebugPanel extends Component {
 
         // 半透明背景
         const bgNode = new Node('bg');
+        bgNode.layer = Layers.Enum.UI_2D;
         root.addChild(bgNode);
         const bgUt = bgNode.addComponent(UITransform);
         bgUt.setContentSize(width, height);
@@ -288,6 +369,7 @@ export class DebugPanel extends Component {
     private makeLabel(parent: Node, name: string, fontSize: number,
                       color: Color, x: number, y: number, w: number, h: number): Label {
         const n = new Node(name);
+        n.layer = Layers.Enum.UI_2D;
         parent.addChild(n);
         const ut = n.addComponent(UITransform);
         ut.setAnchorPoint(0, 1);

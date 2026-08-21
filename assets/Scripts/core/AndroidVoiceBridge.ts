@@ -117,6 +117,9 @@ export class AndroidVoiceBridge extends Component {
     private static readonly HANDSHAKE_MAX_RETRY: number = 10;
     private static readonly HANDSHAKE_INTERVAL: number = 2.0;
 
+    /** 最近一次致命错误码（原代码使用了但未声明，补上） */
+    private _lastError: VoiceError = null;
+
     // ═════════════════════════════════════════
     // 生命周期
     // ═════════════════════════════════════════
@@ -333,10 +336,19 @@ export class AndroidVoiceBridge extends Component {
             return;
         }
 
-        // 权限不足不重启（重启也没用）；识别器忙则多等一会儿
-        if (errorCode !== VoiceError.PERMISSION_DENIED) {
-            this.scheduleRestart(errorCode === VoiceError.RECOGNIZER_BUSY ? 2.0 : 0);
+        // 致命错误（权限不足/客户端引擎错误）不自动重启：
+        // 讯飞 appid 错误、离线资源缺失等属于永久性故障，重启只会每秒刷屏
+        const isFatalClientError =
+            errorCode === VoiceError.PERMISSION_DENIED || errorCode === VoiceError.CLIENT_ERROR;
+
+        if (isFatalClientError) {
+            this._lastError = errorCode;
+            console.warn('[VoiceBridge] 致命错误，停止自动重启（检查讯飞 appid / 离线资源 / 录音权限）');
+            return;
         }
+
+        // 识别器忙则多等一会儿
+        this.scheduleRestart(errorCode === VoiceError.RECOGNIZER_BUSY ? 2.0 : 0);
     }
 
     /** 自动重启监听 */

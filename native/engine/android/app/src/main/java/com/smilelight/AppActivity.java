@@ -30,7 +30,7 @@ public class AppActivity extends CocosActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         // 标记日志：logcat 过滤 SGBAppActivity，出现这行 = 本文件确实打进了 APK
-        Log.d(TAG, "SGB AppActivity 启动（语音增强版 v6）");
+        Log.d(TAG, "SGB AppActivity 启动（语音增强版 v7 讯飞离线版）");
 
         try {
             // v6：无条件先 init（只注册监听+创建识别器，纯 Java 操作，不发事件，安全）
@@ -60,7 +60,8 @@ public class AppActivity extends CocosActivity {
         try {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 Log.d(TAG, "录音权限已授予（识别器已在 onCreate 创建，直接可用）");
-                // init 已在 onCreate 调过（内部有防重入），无需再调
+                // v7：通知语音模块（首次安装场景：TS 在弹窗期间发起的监听请求被挂起，此处恢复）
+                VoiceRecognitionHelper.onPermissionGranted();
             } else {
                 Log.w(TAG, "录音权限被拒绝，语音识别不可用");
                 VoiceRecognitionHelper.notifyPermissionDenied();

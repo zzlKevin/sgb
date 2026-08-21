@@ -1,0 +1,22 @@
+从讯飞 SDK 压缩包里把以下文件复制到本目录（libs/）：
+
+  Msc.jar
+      ← 来自 SDK 的 libs/Msc.jar
+
+  arm64-v8a/libmsc.so
+      ← 来自 SDK 的 libs/arm64-v8a/libmsc.so
+
+  armeabi-v7a/libmsc.so        （如果你的构建 ABI 包含 armeabi-v7a 才需要）
+      ← 来自 SDK 的 libs/armeabi-v7a/libmsc.so
+
+说明：
+1. build.gradle 已配置好：
+   - implementation fileTree(dir: 'libs', include: ['*.jar','*.aar'])  → Msc.jar 自动编译
+   - jniLibs.srcDirs 包含 'libs'                                     → 各 ABI 的 libmsc.so 自动打进 APK
+2. 构建时勾选了哪些 ABI（arm64-v8a / armeabi-v7a），libs 下就要有对应文件夹的 libmsc.so。
+3. 讯飞离线资源（SDK 的 assets/iflytek 文件夹）放到：
+   native/engine/android/app/src/main/assets/iflytek/
+   （本包已建好空目录，把 iflytek 整个文件夹拖进去）
+4. appid 记得改：
+   native/engine/android/app/src/main/java/com/smilelight/voice/VoiceRecognitionHelper.java
+   顶部的 IFLYTEK_APPID 常量。

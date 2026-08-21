@@ -233,7 +233,8 @@
       }
     },
     "graphics": {
-      "custom-pipeline-post-process": true
+      "custom-pipeline-post-process": true,
+      "pipeline": "legacy-pipeline"
     }
   }
 }

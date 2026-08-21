@@ -1,0 +1,8 @@
+把讯飞 SDK 里的 assets/iflytek 整个文件夹的内容放到本目录。
+
+最终结构应为：
+  native/engine/android/app/src/main/assets/iflytek/common.jet （及其他讯飞离线资源文件）
+
+注意：本目录打 APK 时由 build.gradle 的
+  assets.srcDirs "${RES_PATH}/data", "src/main/assets"
+自动包含，无需其他配置。

@@ -5,7 +5,7 @@ import android.os.Bundle;
 import android.Manifest;
 import android.content.pm.PackageManager;
 
-import com.cocos.game.GameActivity;
+import com.smilelight.GameActivity;
 import com.tiga.sgb.voice.VoiceRecognitionHelper;
 
 /**

@@ -1,4 +1,4 @@
-package com.cocos.game;
+package com.smilelight;
 
 import android.Manifest;
 import android.content.pm.PackageManager;
@@ -7,7 +7,7 @@ import android.os.Bundle;
 import android.util.Log;
 
 import com.cocos.lib.GameActivity;
-import com.cocos.game.voice.VoiceRecognitionHelper;
+import com.smilelight.voice.VoiceRecognitionHelper;
 
 /**
  * AppActivity

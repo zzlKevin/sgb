@@ -1,4 +1,4 @@
-package com.cocos.game.voice;
+package com.smilelight.voice;
 
 import android.content.Context;
 import android.content.Intent;
@@ -24,7 +24,7 @@ import java.util.ArrayList;
  *   - Java → TS: emitEventToScript('xxx', data) → nativeBridge.addEventListener('xxx') 收到
  *
  * 放置位置：build/android/proj/src/com/cocos/game/voice/VoiceRecognitionHelper.java
- * （如果你的项目包名不是 com.cocos.game，请把第一行 package 和目录结构改成你的实际包名）
+ * （如果你的项目包名不是 com.smilelight，请把第一行 package 和目录结构改成你的实际包名）
  *
  * 事件协议：
  *   initVoiceRecognition  (TS→Java)  初始化

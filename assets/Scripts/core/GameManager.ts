@@ -30,6 +30,7 @@ import {
 } from './GameModeTypes';
 import { LEDController } from './LEDController';
 import { GSensorController } from './GSensorController';
+import { DebugPanel } from './DebugPanel';
 import { AudioManager } from './AudioManager';
 import { VoiceCommandManager } from './VoiceCommandManager';
 import { AndroidVoiceBridge } from './AndroidVoiceBridge';
@@ -329,6 +330,18 @@ export class GameManager extends Component {
         const hitNode = results[0].collider.node;
         const hitNodeName = hitNode.name || '';
 
+        // 检查是否点到了底座 → 切换调试面板显示/隐藏（用户指定的新交互）
+        // 必须放在 B键/A键 之前：底座紧邻 A键，且名字互不重叠，先行判断最安全
+        if (this.isBaseNode(hitNode)) {
+            console.log('[GameManager] 触摸底座 → 切换调试面板');
+            if (DebugPanel.instance) {
+                DebugPanel.instance.toggle();
+            } else {
+                console.warn('[GameManager] DebugPanel 实例不存在（未挂载或初始化失败）');
+            }
+            return;
+        }
+
         // 检查是否点到了 B键节点
         if (this.bKeyNode && (hitNode === this.bKeyNode || hitNode.parent === this.bKeyNode
             || hitNodeName.includes('B键'))) {
@@ -363,6 +376,26 @@ export class GameManager extends Component {
             console.log('[GameManager] 触摸A键（神光棒中心）→ 展开双翼');
             return;
         }
+    }
+
+    /**
+     * 判断节点（含祖先链，最多 20 层）是否为神光棒底座节点。
+     * 名字宽松匹配：底座 / 基座 / base —— 兼容模型内部节点命名与英文模型
+     * （用户的底座碰撞体挂在神光棒 prefab 内部节点上，名字可能带前缀）。
+     */
+    private isBaseNode(node: Node): boolean {
+        let cur: Node = node;
+        let depth = 0;
+        while (cur && depth < 20) {
+            const nm = (cur.name || '').toLowerCase();
+            if (nm.includes('底座') || nm.includes('基座')
+                || nm === 'base' || nm.endsWith('_base') || nm.startsWith('base_')) {
+                return true;
+            }
+            cur = cur.parent;
+            depth++;
+        }
+        return false;
     }
 
     private onTouchEnd(_event: EventTouch): void {

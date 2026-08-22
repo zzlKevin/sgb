@@ -7,7 +7,7 @@
  *
  * 功能分区：
  *   ┌──────────────────────────────┐
- *   │ 调试面板 60fps [三指点击隐藏]  │
+ *   │ 调试面板 60fps [点底座隐藏]    │
  *   │ 模式: 默认 | 感应: 开          │
  *   │ 加速度 x0.1 y0.9 z0.0 |g|0.9  │
  *   │ 语音: 监听中(看通知栏麦克风)    │
@@ -19,7 +19,7 @@
  *   显示"Java桥未就绪" = 原生 Java 代码没打进 APK
  *   （检查 native/engine/android/app/src/main/java/ 下的文件）
  *
- * 操作：三指同时点屏幕 → 显示/隐藏切换
+ * 操作：点击神光棒底座 → 显示/隐藏切换（三指点屏幕为备用）
  */
 
 import { _decorator, Component, Node, Label, UITransform, Graphics, Color,
@@ -54,6 +54,12 @@ const VOICE_ERROR_NAMES: Record<number, string> = {
 
 @ccclass('DebugPanel')
 export class DebugPanel extends Component {
+
+    /** 全局单例（GameManager 点击底座切换面板用） */
+    private static _instance: DebugPanel = null;
+    public static get instance(): DebugPanel {
+        return DebugPanel._instance;
+    }
 
     // ═════════════════════════════════════════
     // 编辑器属性
@@ -117,6 +123,7 @@ export class DebugPanel extends Component {
     // ═════════════════════════════════════════
 
     onLoad() {
+        DebugPanel._instance = this; // 注册单例（GameManager 点击底座切换用）
         // 防御：调试面板自身绝不允许炸掉整个场景的激活流程
         // （黑屏教训：onLoad 抛异常会中断场景剩余节点的激活）
         try {
@@ -136,6 +143,9 @@ export class DebugPanel extends Component {
     }
 
     onDestroy() {
+        if (DebugPanel._instance === this) {
+            DebugPanel._instance = null;
+        }
         input.off(Input.EventType.TOUCH_START, this.onTouchStart, this);
 
         if (this._voiceBridge && this._voiceBridge.node && this._voiceBridge.node.isValid) {
@@ -341,19 +351,22 @@ export class DebugPanel extends Component {
         } catch (e) {}
 
         // 半透明背景
+        // ⚠️ 修复：之前 bgNode 没设锚点（默认居中）+ 矩形从原点向右上画，
+        //    导致背景框一半跑到屏幕左边缘外（面板超界 bug 的根因）
         const bgNode = new Node('bg');
         bgNode.layer = Layers.Enum.UI_2D;
         root.addChild(bgNode);
         const bgUt = bgNode.addComponent(UITransform);
+        bgUt.setAnchorPoint(0, 1);              // 锚点左上，与 root 对齐
         bgUt.setContentSize(width, height);
-        bgNode.setPosition(0, -height / 2);
+        bgNode.setPosition(0, 0);               // 与 root 原点（屏幕内左上角）重合
         const g = bgNode.addComponent(Graphics);
         g.fillColor = new Color(8, 10, 18, 178);
-        g.rect(0, 0, width, height);
+        g.rect(0, -height, width, height);      // 从左上原点向下覆盖整个面板区域
         g.fill();
         g.lineWidth = 2;
         g.strokeColor = new Color(80, 200, 255, 90);
-        g.rect(1, 1, width - 2, height - 2);
+        g.rect(1, -height + 1, width - 2, height - 2);
         g.stroke();
 
         // 标签布局（从上往下）
@@ -414,7 +427,7 @@ export class DebugPanel extends Component {
         if (!this._titleLabel) return;
 
         // 标题
-        this._titleLabel.string = `调试面板 ${this._fps}fps [三指点击隐藏]`;
+        this._titleLabel.string = `调试面板 ${this._fps}fps [点底座隐藏]`;
 
         // 模式行
         let modeStr = '模式: -(未找到GameManager)';
@@ -544,8 +557,12 @@ export class DebugPanel extends Component {
 
     private onTouchStart(event: EventTouch): void {
         try {
-            const touches = event.getTouches ? event.getTouches() : [];
-            if (touches.length >= 3) {
+            // ⚠️ 修复：getTouches() 只含"本次变动的触点"（引擎源码注释），
+            //    三指先后按下时每次回调只有 1 根 → length>=3 永远不成立（三指隐藏失效的根因）。
+            //    必须用 getAllTouches()（当前屏幕上的全部触点）。此路径保留作备用，
+            //    主交互已改为「点击神光棒底座」切换面板（见 GameManager.isBaseNode）。
+            const all = event.getAllTouches ? event.getAllTouches() : [];
+            if (all.length >= 3) {
                 this.toggle();
             }
         } catch (e) {}

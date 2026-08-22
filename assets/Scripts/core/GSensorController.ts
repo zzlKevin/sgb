@@ -10,7 +10,7 @@
  * 在安卓设备上通过 devicemotion 事件获取加速度数据
  */
 
-import { _decorator, Component, sys, input, Input, EventAcceleration, Vec3 } from 'cc';
+import { _decorator, Component, sys, input, Input, EventAcceleration, Vec3, screen } from 'cc';
 import { GDirection, DIRECTION_NAMES, GameEvents } from './GameModeTypes';
 
 const { ccclass, property } = _decorator;
@@ -69,6 +69,17 @@ export class GSensorController extends Component {
     /** 拉回检测是否激活（前一个动作后进入待机） */
     private _pullBackReady: boolean = false;
 
+    // ── 事件链健康监测（真机排查用）──
+    /** 是否收到过 DEVICEMOTION 事件（事件链健康标记） */
+    private _receivedEvent: boolean = false;
+    /** 直连轮询兜底是否已激活并拿到过真实数据 */
+    private _pollingActive: boolean = false;
+    /** 轮询节流计时 */
+    private _pollTimer: number = 0;
+    /** 事件与轮询均无数据的累计时间 */
+    private _noDataTimer: number = 0;
+    private _noDataWarned: boolean = false;
+
     // ═════════════════════════════════════════
     // 生命周期
     // ═════════════════════════════════════════
@@ -79,6 +90,12 @@ export class GSensorController extends Component {
         input.setAccelerometerInterval(60); // 60Hz 采样
 
         input.on(Input.EventType.DEVICEMOTION, this.onAcceleration, this);
+
+        // 诊断：打印事件链前置条件（排查事件不到达问题）
+        try {
+            const jsbAny = (globalThis as any).jsb;
+            console.log(`[GSensor] 初始化 hasFeature=${sys.hasFeature(sys.Feature.EVENT_ACCELEROMETER)} os=${sys.os} jsb.device=${jsbAny && jsbAny.device ? '√' : '×'}`);
+        } catch (e) { /* 诊断失败不影响功能 */ }
 
         // 开始校准
         this.startCalibration();
@@ -98,6 +115,15 @@ export class GSensorController extends Component {
         if (this._cooldownTimer > 0) {
             this._cooldownTimer -= dt;
             if (this._cooldownTimer < 0) this._cooldownTimer = 0;
+        }
+
+        // ── 事件链兜底：DEVICEMOTION 事件从未到达时，直接轮询原生数据 ──
+        if (!this._receivedEvent) {
+            this._pollTimer += dt;
+            if (this._pollTimer >= 0.1) { // 10Hz 轮询（引擎事件链为 5Hz）
+                this._pollTimer = 0;
+                this.pollDeviceMotion();
+            }
         }
 
         // 校准中
@@ -194,14 +220,18 @@ export class GSensorController extends Component {
     private _lastAccel: Vec3 = new Vec3(0, 0, 0);
 
     private onAcceleration(event: EventAcceleration): void {
+        this._receivedEvent = true; // 事件链健康（收到过至少一次事件）
         if (!this._enabled_sensor) return;
 
         const accel = event.acceleration;
         if (!accel) return;
 
-        const x = accel.x;
-        const y = accel.y;
-        const z = accel.z;
+        this.handleMotion(accel.x, accel.y, accel.z);
+    }
+
+    /** 统一的加速度数据处理（事件链与轮询兜底共用） */
+    private handleMotion(x: number, y: number, z: number): void {
+        if (!this._enabled_sensor) return;
         this._lastAccel.set(x, y, z);
 
         // 校准中，累计读数
@@ -259,6 +289,74 @@ export class GSensorController extends Component {
             console.log(`[GSensor] 校准完成，基准: (${this._baseline.x.toFixed(2)}, ${this._baseline.y.toFixed(2)}, ${this._baseline.z.toFixed(2)})`);
         }
         this._calibrating = false;
+    }
+
+    /**
+     * 直连轮询兜底：绕过 DEVICEMOTION 事件链，直接读原生加速度数据。
+     * 背景：部分真机上事件链（Java传感器 → JS 事件派发）断开，但原生数据源
+     *       正常，jsb.device.getDeviceMotionValue() 仍能取到实时数值。
+     * 换算公式复刻引擎 pal/input/native/accelerometer-input.ts 的 _didAccelerate：
+     *   原始数组 [3][4][5] × 0.1 → 安卓 x/y 取反 → 横屏旋转（本项目竖屏为主）
+     */
+    private pollDeviceMotion(): void {
+        let dev: any = null;
+        try {
+            const jsbAny = (globalThis as any).jsb;
+            dev = jsbAny ? jsbAny.device : null;
+        } catch (e) { dev = null; }
+        if (!dev || typeof dev.getDeviceMotionValue !== 'function') return;
+
+        let v: number[] = null;
+        try { v = dev.getDeviceMotionValue(); } catch (e) { return; }
+        if (!v || v.length < 6) return;
+
+        let x = v[3] * 0.1;
+        let y = v[4] * 0.1;
+        const z = v[5] * 0.1;
+
+        // 安卓数值取反（引擎源码注明：fix android acc values are opposite）
+        if (sys.os === sys.OS.ANDROID || sys.os === sys.OS.OHOS || sys.os === sys.OS.OPENHARMONY) {
+            x = -x;
+            y = -y;
+        }
+
+        // 横屏旋转（保险起见复刻引擎逻辑；竖屏不受影响）
+        const rotated = this.applyOrientationSwap(x, y);
+        x = rotated.x;
+        y = rotated.y;
+
+        const hasData = Math.abs(x) > 1e-6 || Math.abs(y) > 1e-6 || Math.abs(z) > 1e-6;
+        if (hasData) {
+            if (!this._pollingActive) {
+                this._pollingActive = true;
+                console.warn('[GSensor] ⚠️ DEVICEMOTION 事件未到达，已启用直连轮询兜底（数据正常，功能不受影响）');
+            }
+            this._noDataTimer = 0;
+            this.handleMotion(x, y, z);
+        } else {
+            // 轮询也是零 → 原生链路整体断开或设备无加速度计
+            this._noDataTimer += 0.1; // 本方法 10Hz 调用
+            if (this._noDataTimer >= 5 && !this._noDataWarned) {
+                this._noDataWarned = true;
+                console.warn('[GSensor] ⚠️ 事件与轮询均无数据(5秒)：设备可能没有加速度计（TV盒子？），或原生传感器链路断开');
+            }
+        }
+    }
+
+    /** 横屏时旋转坐标（复刻引擎 Orientation 换算；竖屏原样返回） */
+    private applyOrientationSwap(x: number, y: number): { x: number; y: number } {
+        try {
+            const o = (screen as any).orientation;
+            if (typeof o === 'number') {
+                // pal Orientation 枚举：PORTRAIT=1, LANDSCAPE_LEFT=2, LANDSCAPE_RIGHT=3, PORTRAIT_UPSIDE_DOWN=4
+                if (o === 3) return { x: -y, y: x };   // LANDSCAPE_RIGHT
+                if (o === 2) return { x: y, y: -x };   // LANDSCAPE_LEFT
+            } else if (typeof o === 'string') {
+                if (o.indexOf('landscape-secondary') >= 0) return { x: -y, y: x };
+                if (o.indexOf('landscape-primary') >= 0) return { x: y, y: -x };
+            }
+        } catch (e) { /* 取不到方向信息，保持原值 */ }
+        return { x, y };
     }
 
     // ═════════════════════════════════════════

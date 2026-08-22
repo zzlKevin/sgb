@@ -18,6 +18,7 @@ import com.iflytek.cloud.SpeechConstant;
 import com.iflytek.cloud.SpeechError;
 import com.iflytek.cloud.SpeechRecognizer;
 import com.iflytek.cloud.SpeechUtility;
+import com.iflytek.cloud.util.ResourceUtil;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -26,7 +27,7 @@ import java.lang.ref.WeakReference;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * VoiceRecognitionHelper - 神光棒 TV6 安卓语音识别辅助类 v7（科大讯飞离线版）
+ * VoiceRecognitionHelper - 神光棒 TV6 安卓语音识别辅助类 v7.3（科大讯飞离线版）
  *
  * ⚠️ 正确放置位置：
  *   native/engine/android/app/src/main/java/com/smilelight/voice/VoiceRecognitionHelper.java
@@ -70,8 +71,9 @@ public class VoiceRecognitionHelper {
     private static final String TAG = "VoiceRecognitionHelper";
 
     // ═════════════════════════════════════════
-    // ⚠️⚠️⚠️ 把这里换成你的讯飞 appid ⚠️⚠️⚠️
-    // 讯飞开放平台 → 控制台 → 我的应用 → APPID（8位数字+字母）
+    // 讯飞 appid（讯飞开放平台 → 控制台 → 我的应用）
+    // ⚠️ 注意：appid 必须与「下载离线听写 SDK 时所选的应用」一致，
+    //    且该应用需在控制台开通「离线语音听写」服务
     // ═════════════════════════════════════════
     private static final String IFLYTEK_APPID = "b8512270";
 
@@ -89,6 +91,9 @@ public class VoiceRecognitionHelper {
 
     /** AppActivity 弱引用（权限检查用，避免静态持有 Activity 泄漏） */
     private static WeakReference<Activity> sActivityRef = null;
+
+    /** 应用级 Context（设置离线资源路径用；与进程同生命周期，无泄漏风险） */
+    private static volatile Context sAppContext = null;
 
     /** 本次会话累积识别文本（讯飞分段返回，isLast 时统一上报，与原版 onPartialResults 不上报策略一致） */
     private static final StringBuilder sResultText = new StringBuilder();
@@ -114,6 +119,7 @@ public class VoiceRecognitionHelper {
         if (context instanceof Activity) {
             sActivityRef = new WeakReference<>((Activity) context);
         }
+        sAppContext = context.getApplicationContext();
 
         try {
             // 1. 讯飞引擎基础初始化（appid 必须与包名匹配；官方写法用 SpeechConstant.APPID）
@@ -154,7 +160,16 @@ public class VoiceRecognitionHelper {
             Log.e(TAG, "挂 JsbBridge 监听失败", t);
         }
 
-        // 4. 引擎就绪兜底：15 秒后 onInit 仍未成功回调 → 上报致命错误（防 TS 侧无限等待）
+        // 4. 离线资源体检：assets/iflytek 必须打进 APK（离线引擎靠它安装）
+        if (!checkOfflineResources(context)) {
+            Log.e(TAG, "⚠️⚠️⚠️ APk 里没有离线语音资源（assets/iflytek 缺失或为空）！");
+            Log.e(TAG, "⚠️ 离线引擎将不可用，startListening 会报 23007(引擎未初始化)。");
+            Log.e(TAG, "⚠️ 修复：把讯飞 SDK 解压后的 assets/iflytek 整个文件夹复制到");
+            Log.e(TAG, "⚠️ native/engine/android/app/src/main/assets/ 下，删 build 重新构建。");
+            Log.e(TAG, "⚠️ 若 SDK 包里没有 assets/iflytek：重新下载 SDK 时必须勾选「离线听写/离线语音听写」能力。");
+        }
+
+        // 5. 引擎就绪兜底：15 秒后 onInit 仍未成功回调 → 上报致命错误（防 TS 侧无限等待）
         sMainHandler.postDelayed(() -> {
             if (!sEngineReady.get() && !sUnavailable && sRecognizer != null) {
                 Log.e(TAG, "等待讯飞引擎就绪超时（15s 无 onInit 回调），上报致命错误");
@@ -163,7 +178,7 @@ public class VoiceRecognitionHelper {
             }
         }, 15000);
 
-        Log.d(TAG, "语音识别初始化完成（讯飞离线版 v7，已挂监听，等 TS 握手，不发任何事件）");
+        Log.d(TAG, "语音识别初始化完成（讯飞离线版 v7.3：appid=b8512270 + asr_res_path 资源路径，等 TS 握手）");
         if (sUnavailable) {
             Log.e(TAG, "⚠️ 引擎不可用：请按 README_讯飞语音接入.md 检查 SDK 文件与 appid");
         }
@@ -223,6 +238,27 @@ public class VoiceRecognitionHelper {
                     == PackageManager.PERMISSION_GRANTED;
         } catch (Throwable t) {
             return true;
+        }
+    }
+
+    /** 离线资源体检：APK 的 assets 里是否有离线听写 iat 资源
+     *  ⚠️ 注意：正确位置是 assets/iat/（assets 根目录下），
+     *  不是 assets/iflytek/iat/！（iflytek 文件夹只有 UI 图片，那是放错地方了）
+     */
+    private static boolean checkOfflineResources(Context context) {
+        try {
+            String[] iatFiles = null;
+            try {
+                iatFiles = context.getAssets().list("iat");
+            } catch (Throwable ignored) {}
+            boolean hasIat = iatFiles != null && iatFiles.length > 0;
+            Log.d(TAG, "离线资源检查 assets/iat: "
+                    + (hasIat ? java.util.Arrays.toString(iatFiles) + " ✓"
+                              : "✗缺失！（23007根源：把SDK压缩包 res/iat/ 下的 common.jet+sms_16k.jet 拷到 assets/iat/）"));
+            return hasIat;
+        } catch (Throwable t) {
+            Log.w(TAG, "离线资源检查异常: " + t.getMessage());
+            return false;
         }
     }
 
@@ -307,6 +343,27 @@ public class VoiceRecognitionHelper {
                     ? error.getErrorDescription() : "未知";
             Log.w(TAG, "识别错误 code=" + code + "（" + desc + "）");
 
+            // 10107 专属诊断：参数本身没错时，几乎都是 SDK 不含离线引擎/离线资源缺失
+            if (code == 10107) {
+                Log.e(TAG, "⚠️ 10107 排查（离线听写）：");
+                Log.e(TAG, "⚠️ ① 看本 log 顶部「离线资源检查 assets/iflytek」一行：");
+                Log.e(TAG, "⚠️    若显示「不存在/为空」→ assets/iflytek 没打进 APK（构建前要放好资源）");
+                Log.e(TAG, "⚠️ ② SDK 压缩包里没有 assets/iflytek 文件夹 → 下载 SDK 时没勾选离线听写能力，");
+                Log.e(TAG, "⚠️    去讯飞控制台重新下载（勾选语音听写离线能力），替换 Msc.jar/libmsc.so/资源");
+                Log.e(TAG, "⚠️ ③ 讯飞控制台→应用→语音听写（流式版）→确认离线服务已开通");
+            }
+
+            // 23007 专属诊断：离线引擎未初始化 = 识别模型资源没加载
+            if (code == 23007) {
+                Log.e(TAG, "⚠️ 23007 排查（离线引擎未初始化=识别模型没加载）：");
+                Log.e(TAG, "⚠️ ① 看上方是否打印「离线资源路径: ...iat/common.jet;...iat/sms_16k.jet」");
+                Log.e(TAG, "⚠️ ② 看启动日志「离线资源检查」——iat 显示 ✗缺失 = 资源没拷进 APK：");
+                Log.e(TAG, "⚠️    把 SDK 压缩包 res/iat/ 下的 common.jet + sms_16k.jet 复制到");
+                Log.e(TAG, "⚠️    native/engine/android/app/src/main/assets/iat/ （assets根目录！不是iflytek子目录）然后删build重建");
+                Log.e(TAG, "⚠️ ③ 确认下载 SDK 时所选应用 = appid " + IFLYTEK_APPID + " 对应的应用");
+                Log.e(TAG, "⚠️ ④ 控制台确认已开通「离线语音听写」服务（免费试用10台/90天）");
+            }
+
             // 静音超时/无结果是持续聆听下的高频正常现象（映射 7，TS 会自动重启监听）
             dispatchToScript("onVoiceError", mapIflytekError(code));
         }
@@ -368,6 +425,8 @@ public class VoiceRecognitionHelper {
 
         try {
             // ── 离线听写参数 ──
+            // 官方 Demo 模式：先重置全部参数，防止上次会话残留参数导致 10107
+            sRecognizer.setParameter(SpeechConstant.PARAMS, null);
             sRecognizer.setParameter(SpeechConstant.ENGINE_TYPE, SpeechConstant.TYPE_LOCAL);
             sRecognizer.setParameter(SpeechConstant.LANGUAGE, "zh_cn");
             sRecognizer.setParameter(SpeechConstant.ACCENT, "mandarin");
@@ -378,6 +437,24 @@ public class VoiceRecognitionHelper {
             sRecognizer.setParameter(SpeechConstant.VAD_EOS, "2000");
             // 结果不加标点（语音指令匹配不需要标点干扰）
             sRecognizer.setParameter(SpeechConstant.ASR_PTT, "0");
+
+            // ★★★ 离线听写资源路径（官方文档 3.2 节）——23007 的解药 ★★★
+            // 离线引擎启动时必须知道识别模型在哪。不设置 → 引擎找不到模型 →
+            // startListening 报 23007（引擎未初始化）。
+            // 资源文件（SDK 压缩包 res/iat/ 下）需已复制到：
+            //   native/engine/android/app/src/main/assets/iat/  ← assets 根目录！
+            // 注：此 SDK 版本的 ASR_RES_PATH 常量在 ResourceUtil 类（不在 SpeechConstant）
+            if (sAppContext != null) {
+                String resPath = ResourceUtil.generateResourcePath(sAppContext,
+                                ResourceUtil.RESOURCE_TYPE.assets, "iat/common.jet")
+                        + ";"
+                        + ResourceUtil.generateResourcePath(sAppContext,
+                                ResourceUtil.RESOURCE_TYPE.assets, "iat/sms_16k.jet");
+                sRecognizer.setParameter(ResourceUtil.ASR_RES_PATH, resPath);
+                Log.d(TAG, "离线资源路径: " + resPath);
+            } else {
+                Log.e(TAG, "⚠️ sAppContext 为空，离线资源路径未设置（会报 23007）");
+            }
 
             int ret = sRecognizer.startListening(mRecognizerListener);
             if (ret != 0) {

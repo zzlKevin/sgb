@@ -73,7 +73,7 @@ public class VoiceRecognitionHelper {
     // ⚠️⚠️⚠️ 把这里换成你的讯飞 appid ⚠️⚠️⚠️
     // 讯飞开放平台 → 控制台 → 我的应用 → APPID（8位数字+字母）
     // ═════════════════════════════════════════
-    private static final String IFLYTEK_APPID = "00000000";
+    private static final String IFLYTEK_APPID = "b8512270";
 
     // ═════════════════════════════════════════
     // 状态

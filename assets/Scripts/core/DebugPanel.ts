@@ -23,8 +23,11 @@
  */
 
 import { _decorator, Component, Node, Label, UITransform, Graphics, Color,
-         view, input, Input, EventTouch, find, Layers, Canvas, Camera, ClearFlag,
+         view, input, Input, EventTouch, find, Layers, Canvas, Camera,
          director } from 'cc';
+// 注：引擎 3.8 的 cc 模块不导出 ClearFlag 枚举（import 进来是 undefined，
+//     运行时报 "Cannot read properties of undefined (reading 'DEPTH_ONLY')"）。
+//     正确用法是 Camera.ClearFlag.XXX（引擎把该枚举挂在了 Camera 类上）。
 import { GSensorController } from './GSensorController';
 import { AndroidVoiceBridge } from './AndroidVoiceBridge';
 import { GameManager } from './GameManager';
@@ -114,16 +117,22 @@ export class DebugPanel extends Component {
     // ═════════════════════════════════════════
 
     onLoad() {
-        this.findReferences();
-        this.buildUI();
-        this.hookConsole();
-        this.bindEvents();
+        // 防御：调试面板自身绝不允许炸掉整个场景的激活流程
+        // （黑屏教训：onLoad 抛异常会中断场景剩余节点的激活）
+        try {
+            this.findReferences();
+            this.buildUI();
+            this.hookConsole();
+            this.bindEvents();
+            console.log('[DebugPanel] 初始化完成 layer=UI_2D root=' +
+                (this._root ? this._root.name : '无') +
+                ' GM=' + (this._gameManager ? '√' : '×') +
+                ' GS=' + (this._gSensor ? '√' : '×') +
+                ' VB=' + (this._voiceBridge ? '√' : '×'));
+        } catch (e) {
+            console.error('[DebugPanel] 初始化失败（不影响游戏本体）', e);
+        }
         input.on(Input.EventType.TOUCH_START, this.onTouchStart, this);
-        console.log('[DebugPanel] 初始化完成 layer=UI_2D root=' +
-            (this._root ? this._root.name : '无') +
-            ' GM=' + (this._gameManager ? '√' : '×') +
-            ' GS=' + (this._gSensor ? '√' : '×') +
-            ' VB=' + (this._voiceBridge ? '√' : '×'));
     }
 
     onDestroy() {
@@ -238,28 +247,39 @@ export class DebugPanel extends Component {
             return this.node;
         }
 
-        const canvasNode = new Node('DebugCanvas');
-        canvasNode.layer = Layers.Enum.UI_2D;
-        scene.addChild(canvasNode);
-        canvasNode.addComponent(UITransform);
-        canvasNode.addComponent(Canvas);
+        // 防御：任何一步失败都要清掉已创建的节点——
+        // 否则会留下一个「默认黑色清屏 + 最高渲染优先级」的孤儿相机，
+        // 它会把整个 3D 画面刷黑（本次安卓真机黑屏的直接原因）
+        let canvasNode: Node = null;
+        try {
+            canvasNode = new Node('DebugCanvas');
+            canvasNode.layer = Layers.Enum.UI_2D;
+            scene.addChild(canvasNode);
+            canvasNode.addComponent(UITransform);
+            canvasNode.addComponent(Canvas);
 
-        // 专用 UI 相机（引擎注释：DEPTH_ONLY 常用于 UI 相机——不清颜色，叠加渲染）
-        const camNode = new Node('DebugUICamera');
-        camNode.layer = Layers.Enum.UI_2D;
-        canvasNode.addChild(camNode);
-        camNode.setPosition(0, 0, 1000);
-        const cam = camNode.addComponent(Camera);
-        cam.projection = Camera.ProjectionType.ORTHO;
-        cam.orthoHeight = 1000;
-        cam.visibility = Layers.Enum.UI_2D;
-        cam.priority = 1000;           // 大于主 3D 相机（默认0），后渲染叠加
-        cam.clearFlags = ClearFlag.DEPTH_ONLY;  // ★不清颜色，3D 画面得以保留
-        cam.near = 1;
-        cam.far = 2001;
+            // 专用 UI 相机（引擎注释：DEPTH_ONLY 常用于 UI 相机——不清颜色，叠加渲染）
+            const camNode = new Node('DebugUICamera');
+            camNode.layer = Layers.Enum.UI_2D;
+            canvasNode.addChild(camNode);
+            camNode.setPosition(0, 0, 1000);
+            const cam = camNode.addComponent(Camera);
+            cam.projection = Camera.ProjectionType.ORTHO;
+            cam.orthoHeight = 1000;
+            cam.visibility = Layers.Enum.UI_2D;
+            cam.priority = 1000;           // 大于主 3D 相机（默认0），后渲染叠加
+            // ★ Camera.ClearFlag（不是顶层 ClearFlag——那个在 3.8 的 cc 模块里不存在！）
+            cam.clearFlags = Camera.ClearFlag.DEPTH_ONLY;  // ★不清颜色，3D 画面得以保留
+            cam.near = 1;
+            cam.far = 2001;
 
-        // Canvas 与 UI 相机关联
-        canvasNode.getComponent(Canvas).cameraComponent = cam;
+            // Canvas 与 UI 相机关联
+            canvasNode.getComponent(Canvas).cameraComponent = cam;
+        } catch (e) {
+            console.error('[DebugPanel] 自建画布失败，清理残留节点', e);
+            if (canvasNode && canvasNode.isValid) canvasNode.destroy();
+            return this.node;
+        }
 
         console.log('[DebugPanel] 自动创建画布+UI相机完成（DEPTH_ONLY 不黑屏）');
         return canvasNode;
@@ -274,8 +294,8 @@ export class DebugPanel extends Component {
         try {
             const cams = canvasNode.getComponentsInChildren(Camera);
             for (const cam of cams) {
-                if (cam.clearFlags === ClearFlag.SOLID_COLOR) {
-                    cam.clearFlags = ClearFlag.DEPTH_ONLY;
+                if (cam.clearFlags === Camera.ClearFlag.SOLID_COLOR) {
+                    cam.clearFlags = Camera.ClearFlag.DEPTH_ONLY;
                     console.log(`[DebugPanel] 已修正 UI 相机 ${cam.node.name}: 清屏→只清深度（防黑屏）`);
                 }
                 if (cam.priority < 100) {

@@ -72,6 +72,8 @@ export class GSensorController extends Component {
     // ── 事件链健康监测（真机排查用）──
     /** 是否收到过 DEVICEMOTION 事件（事件链健康标记） */
     private _receivedEvent: boolean = false;
+    /** Java 直连桥是否已收到数据（SensorManager 通道健康标记） */
+    private _bridgeActive: boolean = false;
     /** 直连轮询兜底是否已激活并拿到过真实数据 */
     private _pollingActive: boolean = false;
     /** 轮询节流计时 */
@@ -97,12 +99,55 @@ export class GSensorController extends Component {
             console.log(`[GSensor] 初始化 hasFeature=${sys.hasFeature(sys.Feature.EVENT_ACCELEROMETER)} os=${sys.os} jsb.device=${jsbAny && jsbAny.device ? '√' : '×'}`);
         } catch (e) { /* 诊断失败不影响功能 */ }
 
+        // ── Java 直连通道：绕开引擎传感器链路（真机上该链路数据冻结的根治方案）──
+        this.initJavaBridge();
+
         // 开始校准
         this.startCalibration();
 
         // 调试按键
         if (this.enableDebugKeys && sys.platform === sys.Platform.EDITOR_PAGE) {
             this.setupDebugKeys();
+        }
+    }
+
+    /**
+     * Java 直连桥：让 Java 层 GSensorHelper（SensorManager 直连）推送加速度数据。
+     * 数据事件名 onGSensorData，格式 "x,y,z"（引擎口径 g 单位，Java 侧已换算）。
+     * 与语音桥（onVoiceResult 等）共用 main 通道，靠事件名区分，互不干扰。
+     */
+    private initJavaBridge(): void {
+        try {
+            const jsbAny = (globalThis as any).jsb;
+            const wrapper = jsbAny && jsbAny.jsbBridgeWrapper;
+            if (!wrapper || typeof wrapper.addNativeEventListener !== 'function'
+                || typeof wrapper.dispatchEventToNative !== 'function') {
+                console.log('[GSensor] jsbBridgeWrapper 不可用（编辑器/非安卓），跳过 Java 直连');
+                return;
+            }
+            // 监听 Java 推来的传感器数据
+            wrapper.addNativeEventListener('onGSensorData', (arg: string) => {
+                try {
+                    if (typeof arg !== 'string' || !arg) return;
+                    const parts = arg.split(',');
+                    if (parts.length < 3) return;
+                    const x = parseFloat(parts[0]);
+                    const y = parseFloat(parts[1]);
+                    const z = parseFloat(parts[2]);
+                    if (isNaN(x) || isNaN(y) || isNaN(z)) return;
+                    if (!this._bridgeActive) {
+                        this._bridgeActive = true;
+                        console.log('[GSensor] ✓ Java 直连数据已到达（SensorManager→JsbBridge 通道工作正常）');
+                    }
+                    this._receivedEvent = true; // 有活数据，停用轮询兜底省电
+                    this.handleMotion(x, y, z);
+                } catch (e) { /* 单帧解析失败丢弃即可 */ }
+            });
+            // 请求 Java 启动传感器
+            wrapper.dispatchEventToNative('initGSensor', '');
+            console.log('[GSensor] 已请求 Java 启动传感器直连（initGSensor）');
+        } catch (e) {
+            console.warn('[GSensor] Java 直连初始化失败（回退引擎事件链+轮询兜底）', e);
         }
     }
 

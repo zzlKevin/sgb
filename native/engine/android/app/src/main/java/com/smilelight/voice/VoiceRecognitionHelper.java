@@ -160,13 +160,20 @@ public class VoiceRecognitionHelper {
             Log.e(TAG, "挂 JsbBridge 监听失败", t);
         }
 
-        // 4. 离线资源体检：assets/iflytek 必须打进 APK（离线引擎靠它安装）
+        // 3.5 初始化重力感应直连模块（引擎传感器链路在部分真机上数据冻结，
+        //     Java 层 SensorManager 直连是最可靠通道，由 TS 通过桥命令按需启动）
+        try {
+            com.smilelight.sensor.GSensorHelper.init(context.getApplicationContext());
+        } catch (Throwable t) {
+            Log.w(TAG, "GSensorHelper 初始化失败（不影响其他功能）", t);
+        }
+
+        // 4. 离线资源体检：assets/iat 必须打进 APK（离线引擎靠它安装）
         if (!checkOfflineResources(context)) {
-            Log.e(TAG, "⚠️⚠️⚠️ APk 里没有离线语音资源（assets/iflytek 缺失或为空）！");
+            Log.e(TAG, "⚠️⚠️⚠️ APK 里没有离线语音资源（assets/iat 缺失或为空）！");
             Log.e(TAG, "⚠️ 离线引擎将不可用，startListening 会报 23007(引擎未初始化)。");
-            Log.e(TAG, "⚠️ 修复：把讯飞 SDK 解压后的 assets/iflytek 整个文件夹复制到");
-            Log.e(TAG, "⚠️ native/engine/android/app/src/main/assets/ 下，删 build 重新构建。");
-            Log.e(TAG, "⚠️ 若 SDK 包里没有 assets/iflytek：重新下载 SDK 时必须勾选「离线听写/离线语音听写」能力。");
+            Log.e(TAG, "⚠️ 修复：把讯飞 SDK 压缩包 res/iat/ 下的 common.jet + sms_16k.jet 复制到");
+            Log.e(TAG, "⚠️ native/engine/android/app/src/main/assets/iat/ （assets 根目录），删 build 重新构建。");
         }
 
         // 5. 引擎就绪兜底：15 秒后 onInit 仍未成功回调 → 上报致命错误（防 TS 侧无限等待）
@@ -432,8 +439,8 @@ public class VoiceRecognitionHelper {
             sRecognizer.setParameter(SpeechConstant.ACCENT, "mandarin");
             // 注：音频来源不设置，SDK 默认就是麦克风（"-1" 才是写音频流）。
             //     不用 ASR_AUDIO_SOURCE 常量——部分 SDK 版本里不存在该符号，编译不过。
-            // VAD 静音超时（毫秒）：前端 4s（多久没开始说话算超时）/ 后端 2s（说完多久收尾）
-            sRecognizer.setParameter(SpeechConstant.VAD_BOS, "4000");
+            // VAD 静音超时（毫秒）：前端 8s（持续聆听：安静时撑久一点再重启）/ 后端 2s（说完多久收尾）
+            sRecognizer.setParameter(SpeechConstant.VAD_BOS, "8000");
             sRecognizer.setParameter(SpeechConstant.VAD_EOS, "2000");
             // 结果不加标点（语音指令匹配不需要标点干扰）
             sRecognizer.setParameter(SpeechConstant.ASR_PTT, "0");
@@ -538,7 +545,11 @@ public class VoiceRecognitionHelper {
             // 无匹配结果 / 无语音输入 —— 持续聆听下的正常现象
             case 20001:
             case 20002:
-                return "7";  // ERROR_NO_MATCH
+            // ⚠️ 10118「您好像没有说话哦」= VAD 前端超时（没检测到人声）。
+            //    持续监听下高频发生（安静环境每 VAD_BOS 秒一次），
+            //    之前误落到 default→"5"致命 → TS 停止自动重启 → 「监听5秒后没了」的根因
+            case 10118:
+                return "7";  // ERROR_NO_MATCH（TS 端自动重启监听，持续聆听不中断）
 
             // 识别器忙 / 会话冲突 —— 稍后自动重启即可
             case 20006:

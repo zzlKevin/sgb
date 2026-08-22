@@ -22,9 +22,9 @@
  * 操作：点击神光棒底座 → 显示/隐藏切换（三指点屏幕为备用）
  */
 
-import { _decorator, Component, Node, Label, UITransform, Graphics, Color,
+import { _decorator, Component, Node, Label, UITransform, Color,
          view, input, Input, EventTouch, find, Layers, Canvas, Camera,
-         director } from 'cc';
+         director, Sprite, SpriteFrame, builtinResMgr } from 'cc';
 // 注：引擎 3.8 的 cc 模块不导出 ClearFlag 枚举（import 进来是 undefined，
 //     运行时报 "Cannot read properties of undefined (reading 'DEPTH_ONLY')"）。
 //     正确用法是 Camera.ClearFlag.XXX（引擎把该枚举挂在了 Camera 类上）。
@@ -351,23 +351,35 @@ export class DebugPanel extends Component {
         } catch (e) {}
 
         // 半透明背景
-        // ⚠️ 修复：之前 bgNode 没设锚点（默认居中）+ 矩形从原点向右上画，
-        //    导致背景框一半跑到屏幕左边缘外（面板超界 bug 的根因）
+        // ⚠️ 修复史：
+        //   v4：bgNode 没设锚点（默认居中）→ 一半跑到屏幕外（超界根因）
+        //   v5：Graphics 在节点树 inactive→active 后不重绘（背景消失不恢复 bug），
+        //       改用 Sprite + 引擎内置白色贴图（default-sprite-splash）着色，
+        //       Sprite 是标准渲染组件，重激活 100% 恢复。
+        // 边框：外层青色 Sprite 稍大一圈，内层深色 Sprite 盖住中间
+        const borderNode = new Node('bgBorder');
+        borderNode.layer = Layers.Enum.UI_2D;
+        root.addChild(borderNode);
+        const borderUt = borderNode.addComponent(UITransform);
+        borderUt.setAnchorPoint(0, 1);
+        borderUt.setContentSize(width, height);
+        borderNode.setPosition(0, 0);
+        const borderSprite = borderNode.addComponent(Sprite);
+        borderSprite.spriteFrame = builtinResMgr.get<SpriteFrame>('default-sprite-splash');
+        borderSprite.sizeMode = Sprite.SizeMode.CUSTOM;
+        borderSprite.color = new Color(80, 200, 255, 90);   // 青色描边效果
+
         const bgNode = new Node('bg');
         bgNode.layer = Layers.Enum.UI_2D;
         root.addChild(bgNode);
         const bgUt = bgNode.addComponent(UITransform);
         bgUt.setAnchorPoint(0, 1);              // 锚点左上，与 root 对齐
-        bgUt.setContentSize(width, height);
-        bgNode.setPosition(0, 0);               // 与 root 原点（屏幕内左上角）重合
-        const g = bgNode.addComponent(Graphics);
-        g.fillColor = new Color(8, 10, 18, 178);
-        g.rect(0, -height, width, height);      // 从左上原点向下覆盖整个面板区域
-        g.fill();
-        g.lineWidth = 2;
-        g.strokeColor = new Color(80, 200, 255, 90);
-        g.rect(1, -height + 1, width - 2, height - 2);
-        g.stroke();
+        bgUt.setContentSize(width - 4, height - 4);
+        bgNode.setPosition(2, -2);              // 四周留 2px 露出边框色
+        const bgSprite = bgNode.addComponent(Sprite);
+        bgSprite.spriteFrame = builtinResMgr.get<SpriteFrame>('default-sprite-splash');
+        bgSprite.sizeMode = Sprite.SizeMode.CUSTOM;
+        bgSprite.color = new Color(8, 10, 18, 178);          // 半透明深色底
 
         // 标签布局（从上往下）
         let cursor = pad;
